@@ -1,11 +1,9 @@
 {
-	"id": "my_firsyt_plugin",
-	"name": "Heinibal Plugin",
+	"id": "Heinibal-carncavas-plugin",
+	"name": "Heinibal's CarnCavas Plugin",
 	"version": "0.9.0",
 	"minAppVersion": "0.15.0",
-	"description": "File card canvas view: display files as cards (title, tags, mod date) with drag, colors, arrows, groups. Click to edit in right pane.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
-	"isDesktopOnly": false
+	"description": "File card canvas view: display files as cards (title, tags, mod date). Click to edit in right pane.",
+	"author": "Heinibal",
+	"isDesktopOnly": true
 }
