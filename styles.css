@@ -1,0 +1,641 @@
+/* Heinibal File Card Canvas */
+
+.heinibal-file-card-canvas-container {
+	position: relative;
+	height: 100%;
+	overflow: hidden;
+	background-color: var(--background-secondary);
+}
+
+.heinibal-canvas-toolbar {
+	position: absolute;
+	top: 44px;
+	left: 8px;
+	z-index: 10;
+	display: flex;
+	gap: 8px;
+}
+
+.heinibal-canvas-toolbar button {
+	padding: 6px 12px;
+	border-radius: 6px;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border: none;
+	cursor: pointer;
+	font-size: 12px;
+}
+
+.heinibal-canvas-toolbar button:hover {
+	opacity: 0.9;
+}
+
+/* Tab bar for multiple canvases */
+.heinibal-canvas-tabbar {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 36px;
+	z-index: 12;
+	display: flex;
+	align-items: center;
+	padding: 0 8px;
+	gap: 4px;
+	background: var(--background-secondary-alt);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.heinibal-canvas-tabs {
+	display: flex;
+	gap: 2px;
+	flex: 1;
+	overflow-x: auto;
+}
+
+.heinibal-canvas-tab {
+	padding: 6px 12px;
+	border-radius: 6px;
+	font-size: 12px;
+	cursor: pointer;
+	white-space: nowrap;
+	color: var(--text-muted);
+}
+
+.heinibal-canvas-tab:hover {
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
+}
+
+.heinibal-canvas-tab.is-active {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.heinibal-canvas-tab-add {
+	width: 28px;
+	height: 28px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 6px;
+	font-size: 18px;
+	cursor: pointer;
+	color: var(--text-muted);
+}
+
+.heinibal-canvas-tab-add:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.heinibal-canvas-viewport {
+	position: absolute;
+	top: 44px;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	overflow: visible;
+}
+
+.heinibal-canvas-stage {
+	position: absolute;
+	top: 0;
+	left: 0;
+	transform-origin: 0 0;
+}
+
+.heinibal-file-card-canvas-container.heinibal-dropzone-active {
+	background-color: var(--background-modifier-hover);
+	outline: 2px dashed var(--color-accent);
+	outline-offset: -4px;
+}
+
+.heinibal-canvas-edges {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: var(--heinibal-canvas-size, 120000px);
+	height: var(--heinibal-canvas-size, 120000px);
+	pointer-events: none;
+	overflow: visible;
+	z-index: 6;
+}
+
+.heinibal-canvas-edges .heinibal-edge-path {
+	pointer-events: stroke;
+}
+
+.heinibal-canvas-edges .heinibal-edge-path-visible:hover {
+	filter: brightness(1.1);
+}
+
+.heinibal-edge-label {
+	fill: var(--text-normal);
+	pointer-events: all;
+	user-select: none;
+	font-size: 12px;
+	stroke: var(--background-primary);
+	stroke-width: 3px;
+	paint-order: stroke;
+}
+
+.heinibal-edge-handle {
+	fill: var(--background-primary);
+	stroke: var(--color-accent);
+	stroke-width: 2px;
+	opacity: 0.9;
+	vector-effect: non-scaling-stroke;
+}
+
+.heinibal-edge-handle:hover {
+	opacity: 1;
+}
+
+.heinibal-edge-menu input[type="text"] {
+	width: 140px;
+	padding: 4px 8px;
+	border-radius: 4px;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+	color: var(--text-normal);
+}
+
+.heinibal-edge-menu .heinibal-panel-row {
+	margin-top: 6px;
+	justify-content: flex-end;
+}
+
+.heinibal-edge-menu input[type="range"] {
+	width: 100px;
+}
+
+.heinibal-canvas-nodes {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: var(--heinibal-canvas-size, 120000px);
+	height: var(--heinibal-canvas-size, 120000px);
+	pointer-events: none;
+	overflow: visible;
+	z-index: 2;
+}
+
+.heinibal-canvas-nodes > * {
+	pointer-events: auto;
+}
+
+.heinibal-node-wrapper {
+	position: absolute;
+	z-index: 2;
+}
+
+.heinibal-node-wrapper.is-selected .heinibal-canvas-node {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 1px;
+}
+
+.heinibal-canvas-node {
+	position: absolute;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-left: 4px solid var(--color-accent);
+	box-shadow: var(--shadow-s);
+	cursor: pointer;
+	overflow: hidden;
+}
+
+.heinibal-shape-rectangle { border-radius: 2px; }
+.heinibal-shape-rounded { border-radius: 8px; }
+.heinibal-shape-pill { border-radius: 999px; }
+
+.heinibal-canvas-node:hover {
+	box-shadow: var(--shadow-m);
+}
+
+/* Connection dots (show on hover) */
+.heinibal-conn-dot {
+	position: absolute;
+	width: 16px;
+	height: 16px;
+	background: var(--color-accent);
+	border: 2px solid var(--background-primary);
+	border-radius: 50%;
+	cursor: crosshair;
+	z-index: 5;
+	opacity: 0.9;
+	pointer-events: auto;
+}
+
+.heinibal-conn-dot::before {
+	content: "";
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: 30px;
+	height: 30px;
+	transform: translate(-50%, -50%);
+	background: transparent;
+	border-radius: 50%;
+	pointer-events: auto;
+}
+
+.heinibal-conn-dot:hover {
+	transform: scale(1.2);
+	opacity: 1;
+}
+
+.heinibal-conn-dot-top { left: 50%; top: -12px; transform: translateX(-50%); }
+.heinibal-conn-dot-right { right: -12px; top: 50%; transform: translateY(-50%); }
+.heinibal-conn-dot-bottom { left: 50%; bottom: -12px; transform: translateX(-50%); }
+.heinibal-conn-dot-left { left: -12px; top: 50%; transform: translateY(-50%); }
+
+.heinibal-file-card {
+	display: flex;
+	flex-direction: column;
+	padding: 10px 12px 8px 12px;
+	height: 100%;
+	gap: 8px;
+}
+
+.heinibal-node-header {
+	cursor: grab;
+}
+
+.heinibal-file-title {
+	font-weight: 600;
+	font-size: 14px;
+	color: var(--text-normal);
+}
+
+.heinibal-file-meta {
+	display: flex;
+	justify-content: flex-end;
+	align-items: flex-end;
+	margin-top: auto;
+	font-size: 11px;
+	color: var(--text-muted);
+}
+
+.heinibal-file-preview {
+	font-size: 12px;
+	line-height: 1.45;
+	color: var(--text-muted);
+	overflow: hidden;
+	display: -webkit-box;
+	-webkit-line-clamp: 4;
+	-webkit-box-orient: vertical;
+}
+
+.heinibal-file-tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
+.heinibal-tag {
+	background: var(--background-modifier-hover);
+	padding: 2px 6px;
+	border-radius: 4px;
+}
+
+.heinibal-mod-date {
+	margin-left: auto;
+	white-space: nowrap;
+}
+
+.heinibal-node-error {
+	color: var(--text-error);
+	font-size: 12px;
+}
+
+.heinibal-resize-handle {
+	position: absolute;
+	z-index: 7;
+	opacity: 0;
+}
+
+.heinibal-node-wrapper:hover .heinibal-resize-handle,
+.heinibal-node-wrapper.is-selected .heinibal-resize-handle {
+	opacity: 1;
+}
+
+.heinibal-resize-n,
+.heinibal-resize-s {
+	left: 8px;
+	right: 8px;
+	height: 8px;
+	cursor: ns-resize;
+}
+
+.heinibal-resize-n { top: -4px; }
+.heinibal-resize-s { bottom: -4px; }
+
+.heinibal-resize-e,
+.heinibal-resize-w {
+	top: 8px;
+	bottom: 8px;
+	width: 8px;
+	cursor: ew-resize;
+}
+
+.heinibal-resize-e { right: -4px; }
+.heinibal-resize-w { left: -4px; }
+
+.heinibal-resize-ne,
+.heinibal-resize-nw,
+.heinibal-resize-se,
+.heinibal-resize-sw {
+	width: 12px;
+	height: 12px;
+}
+
+.heinibal-resize-ne { top: -6px; right: -6px; cursor: nesw-resize; }
+.heinibal-resize-nw { top: -6px; left: -6px; cursor: nwse-resize; }
+.heinibal-resize-se { bottom: -6px; right: -6px; cursor: nwse-resize; }
+.heinibal-resize-sw { bottom: -6px; left: -6px; cursor: nesw-resize; }
+
+.heinibal-text-node,
+.heinibal-group-node,
+.heinibal-link-node {
+	padding: 8px;
+}
+
+.heinibal-node-label {
+	font-weight: 500;
+	font-size: 13px;
+}
+
+.heinibal-text-content {
+	margin-top: 4px;
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+/* Context menu */
+.heinibal-context-menu {
+	position: fixed;
+	z-index: 1000;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 8px;
+	box-shadow: var(--shadow-l);
+}
+
+.heinibal-menu-colors {
+	display: flex;
+	gap: 4px;
+	margin-bottom: 8px;
+}
+
+.heinibal-menu-colors button {
+	width: 24px;
+	height: 24px;
+	border-radius: 4px;
+	border: 1px solid var(--background-modifier-border);
+	cursor: pointer;
+}
+
+.heinibal-context-menu button {
+	display: block;
+	width: 100%;
+	padding: 6px 12px;
+	border: none;
+	background: transparent;
+	text-align: left;
+	cursor: pointer;
+	border-radius: 4px;
+}
+
+.heinibal-context-menu button:hover {
+	background: var(--background-modifier-hover);
+}
+
+/* Add files modal */
+.heinibal-add-files-modal {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background: rgba(0, 0, 0, 0.5);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 1000;
+}
+
+.heinibal-add-files-modal .heinibal-modal-content {
+	background: var(--background-primary);
+	border-radius: 12px;
+	padding: 20px;
+	max-width: 400px;
+	max-height: 80vh;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+	box-shadow: var(--shadow-l);
+}
+
+.heinibal-add-files-modal h3 {
+	margin: 0 0 12px 0;
+	font-size: 16px;
+}
+
+.heinibal-file-list {
+	flex: 1;
+	overflow-y: auto;
+	max-height: 400px;
+	margin-bottom: 12px;
+}
+
+.heinibal-file-list-item {
+	padding: 8px 12px;
+	cursor: pointer;
+	border-radius: 6px;
+	font-size: 13px;
+}
+
+.heinibal-file-list-item:hover {
+	background: var(--background-modifier-hover);
+}
+
+.heinibal-modal-close {
+	padding: 8px 16px;
+	border-radius: 6px;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border: none;
+	cursor: pointer;
+}
+
+/* Card submenu (below card) */
+.heinibal-card-submenu {
+	position: absolute;
+	top: 100%;
+	left: 0;
+	margin-top: 4px;
+	z-index: 20;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	padding: 8px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	box-shadow: var(--shadow-l);
+	min-width: 180px;
+}
+
+.heinibal-card-submenu .heinibal-panel-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.heinibal-card-submenu .heinibal-panel-content-row {
+	flex: 1 1 100%;
+	align-items: flex-start;
+}
+
+.heinibal-card-submenu .heinibal-panel-content-row input[type="text"] {
+	flex: 1;
+	min-width: 180px;
+	padding: 4px 8px;
+	border-radius: 4px;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+	color: var(--text-normal);
+}
+
+.heinibal-card-submenu .heinibal-panel-textarea {
+	flex: 1;
+	min-width: 200px;
+	min-height: 52px;
+	padding: 6px 8px;
+	border-radius: 4px;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+	color: var(--text-normal);
+	resize: vertical;
+}
+
+.heinibal-card-submenu .heinibal-panel-label {
+	font-size: 11px;
+	color: var(--text-muted);
+	margin-right: 2px;
+}
+
+.heinibal-card-submenu .heinibal-color-btn {
+	width: 22px;
+	height: 22px;
+	border-radius: 4px;
+	border: 1px solid var(--background-modifier-border);
+	cursor: pointer;
+	padding: 0;
+}
+
+.heinibal-card-submenu .heinibal-color-custom {
+	width: 28px;
+	height: 22px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	cursor: pointer;
+	padding: 0;
+	background: transparent;
+}
+
+.heinibal-card-submenu button:not(.heinibal-color-btn):not(.heinibal-color-custom) {
+	padding: 4px 10px;
+	border-radius: 4px;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border: none;
+	cursor: pointer;
+	font-size: 11px;
+}
+
+.heinibal-card-submenu .heinibal-panel-delete {
+	background: var(--color-red) !important;
+}
+
+/* Bottom panel (node settings) - legacy */
+.heinibal-bottom-panel {
+	position: absolute;
+	bottom: 0;
+	left: 0;
+	right: 0;
+	z-index: 15;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 16px;
+	background: var(--background-secondary);
+	border-top: 1px solid var(--background-modifier-border);
+	box-shadow: 0 -2px 10px var(--background-modifier-box-shadow);
+}
+
+.heinibal-panel-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.heinibal-panel-label {
+	font-size: 12px;
+	color: var(--text-muted);
+	margin-right: 4px;
+}
+
+.heinibal-color-btn {
+	width: 28px;
+	height: 28px;
+	border-radius: 6px;
+	border: 1px solid var(--background-modifier-border);
+	cursor: pointer;
+	padding: 0;
+}
+
+.heinibal-color-btn:hover {
+	opacity: 0.9;
+	transform: scale(1.05);
+}
+
+.heinibal-color-custom {
+	width: 32px;
+	height: 28px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	cursor: pointer;
+	padding: 0;
+	background: transparent;
+}
+
+.heinibal-bottom-panel button:not(.heinibal-color-btn):not(.heinibal-color-custom) {
+	padding: 6px 12px;
+	border-radius: 6px;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border: none;
+	cursor: pointer;
+	font-size: 12px;
+}
+
+.heinibal-bottom-panel button:not(.heinibal-color-btn):not(.heinibal-color-custom):hover {
+	opacity: 0.9;
+}
+
+.heinibal-panel-delete {
+	background: var(--color-red) !important;
+}
+
+.heinibal-temp-edge {
+	position: absolute;
+	top: 0;
+	left: 0;
+	pointer-events: none;
+	z-index: 3;
+}
