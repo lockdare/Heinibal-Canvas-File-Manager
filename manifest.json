@@ -1,6 +1,6 @@
 {
-	"id": "heinibal-cardcanvas",
-	"name": "Heinibal's CardCanvas",
+	"id": "card-canvas",
+	"name": "Card Canvas",
 	"version": "0.9.0",
 	"minAppVersion": "0.15.0",
 	"description": "File card canvas view: display files as cards (title, tags, mod date). Click to edit in right pane.",
