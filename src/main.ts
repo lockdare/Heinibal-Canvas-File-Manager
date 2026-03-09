@@ -20,13 +20,13 @@ export default class HeinibalPlugin extends Plugin {
 		});
 
 		this.addCommand({
-			id: "open-file-card-canvas",
-			name: "Open file card canvas",
+			// id: "open-file-card-canvas",
+			// name: "Open file card canvas",
 			callback: () => void this.activateView(),
 		});
 		this.addCommand({
-			id: "create-file-card-canvas",
-			name: "Create new file card canvas",
+			// id: "create-file-card-canvas",
+			// name: "Create new file card canvas",
 			callback: () => void this.createNewCanvasFile(),
 		});
 
