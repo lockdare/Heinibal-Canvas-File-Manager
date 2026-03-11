@@ -12,4 +12,4 @@ This plugin creates a card-based canvas. Users can manage their file assets via 
  - 链接箭头。/ Connect cards using link arrows.
  - 单击文件以在右侧窗口进行编辑。/ Click on a file card to edit its content in the right-side panel.
 
-![Project Logo](.os-card-canvas.png)
+![Project Logo](./os-card-canvas.png)
