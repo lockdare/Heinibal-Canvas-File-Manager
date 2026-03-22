@@ -19,16 +19,16 @@ export default class HeinibalPlugin extends Plugin {
 			void this.createNewCanvasFile();
 		});
 
-		this.addCommand({
-			id: "open-file-card-canvas",
-			name: "Open file card canvas",
-			callback: () => void this.activateView(),
-		});
-		this.addCommand({
-			id: "create-file-card-canvas",
-			name: "Create new file card canvas",
-			callback: () => void this.createNewCanvasFile(),
-		});
+		// this.addCommand({
+		// 	id: "open-file-card-canvas",
+		// 	name: "Open file card canvas",
+		// 	callback: () => void this.activateView(),
+		// });
+		// this.addCommand({
+		// 	id: "create-file-card-canvas",
+		// 	name: "Create new file card canvas",
+		// 	callback: () => void this.createNewCanvasFile(),
+		// });
 
 		this.addSettingTab(new HeinibalSettingTab(this.app, this));
 
