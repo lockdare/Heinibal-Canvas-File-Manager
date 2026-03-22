@@ -70,6 +70,11 @@ export interface CanvasEdgeData {
 export interface CanvasData {
 	nodes: AllCanvasNodeData[];
 	edges: CanvasEdgeData[];
+	viewState?: {
+		panX?: number;
+		panY?: number;
+		zoom?: number;
+	};
 	[key: string]: unknown;
 }
 

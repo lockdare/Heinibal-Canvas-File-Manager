@@ -30,6 +30,23 @@
 	opacity: 0.9;
 }
 
+.heinibal-node-list-title {
+	font-weight: 600;
+}
+
+.heinibal-node-list-subtitle {
+	font-size: 11px;
+	color: var(--text-muted);
+	margin-top: 2px;
+	word-break: break-all;
+}
+
+.heinibal-node-list-actions {
+	display: flex;
+	gap: 6px;
+	margin-top: 8px;
+}
+
 /* Tab bar for multiple canvases */
 .heinibal-canvas-tabbar {
 	position: absolute;
@@ -98,6 +115,14 @@
 	overflow: visible;
 }
 
+.heinibal-marquee-selection {
+	position: absolute;
+	border: 1px solid var(--interactive-accent);
+	background: color-mix(in srgb, var(--interactive-accent) 20%, transparent);
+	pointer-events: none;
+	z-index: 20;
+}
+
 .heinibal-canvas-stage {
 	position: absolute;
 	top: 0;
@@ -124,6 +149,7 @@
 
 .heinibal-canvas-edges .heinibal-edge-path {
 	pointer-events: stroke;
+	cursor: pointer;
 }
 
 .heinibal-canvas-edges .heinibal-edge-path-visible:hover {
@@ -138,6 +164,7 @@
 	stroke: var(--background-primary);
 	stroke-width: 3px;
 	paint-order: stroke;
+	cursor: pointer;
 }
 
 .heinibal-edge-handle {
@@ -146,6 +173,7 @@
 	stroke-width: 2px;
 	opacity: 0.9;
 	vector-effect: non-scaling-stroke;
+	cursor: grab;
 }
 
 .heinibal-edge-handle:hover {
@@ -155,6 +183,15 @@
 .heinibal-edge-menu input[type="text"] {
 	width: 140px;
 	padding: 4px 8px;
+	border-radius: 4px;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+	color: var(--text-normal);
+}
+
+.heinibal-edge-menu select {
+	width: 100px;
+	padding: 4px 6px;
 	border-radius: 4px;
 	border: 1px solid var(--background-modifier-border);
 	background: var(--background-primary);
@@ -188,6 +225,10 @@
 .heinibal-node-wrapper {
 	position: absolute;
 	z-index: 2;
+}
+
+.heinibal-node-wrapper.is-group {
+	z-index: 1;
 }
 
 .heinibal-node-wrapper.is-selected .heinibal-canvas-node {
@@ -443,6 +484,15 @@
 	font-size: 16px;
 }
 
+.heinibal-file-search {
+	margin-bottom: 10px;
+	padding: 8px 10px;
+	border-radius: 6px;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+	color: var(--text-normal);
+}
+
 .heinibal-file-list {
 	flex: 1;
 	overflow-y: auto;
@@ -495,6 +545,21 @@
 	gap: 6px;
 }
 
+.heinibal-card-submenu .heinibal-submenu-panel {
+	display: none;
+	flex: 1 1 100%;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	padding: 6px;
+	gap: 6px;
+}
+
+.heinibal-card-submenu .heinibal-submenu-panel.is-open {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+}
+
 .heinibal-card-submenu .heinibal-panel-content-row {
 	flex: 1 1 100%;
 	align-items: flex-start;
@@ -545,6 +610,17 @@
 	cursor: pointer;
 	padding: 0;
 	background: transparent;
+}
+
+.heinibal-card-submenu .heinibal-color-hex {
+	width: 86px;
+	height: 22px;
+	padding: 2px 6px;
+	border-radius: 4px;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+	color: var(--text-normal);
+	font-size: 11px;
 }
 
 .heinibal-card-submenu button:not(.heinibal-color-btn):not(.heinibal-color-custom) {
@@ -638,4 +714,8 @@
 	left: 0;
 	pointer-events: none;
 	z-index: 3;
+}
+
+.heinibal-group-node {
+	opacity: 0.8;
 }

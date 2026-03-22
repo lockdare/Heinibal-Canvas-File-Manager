@@ -20,6 +20,8 @@ export const HCANVAS_EXT = "hcanvas";
 
 const DRAG_THRESHOLD_PX = 5;
 const CANVAS_SIZE_PX = 120000;
+const DEFAULT_VIEW_STATE = { panX: 0, panY: 0, zoom: 1 };
+const MAX_ABS_PAN = CANVAS_SIZE_PX * 2;
 const MIN_NODE_WIDTH = 160;
 const MIN_NODE_HEIGHT = 80;
 
@@ -47,17 +49,25 @@ export class FileCardCanvasView extends FileView {
 	private canvasStageEl: HTMLElement | null = null;
 	private nodesContainer: HTMLElement;
 	private edgesContainer: SVGElement;
-	private draggedNodeId: string | null = null;
-	private dragOffset = { x: 0, y: 0 };
+	private nodeWrappers = new Map<string, HTMLElement>();
+	private draggedNodeIds = new Set<string>();
+	private dragStartPointerCanvas: { x: number; y: number } | null = null;
+	private dragNodeStartPositions = new Map<string, { x: number; y: number }>();
 	private zoom = 1;
 	private pan = { x: 0, y: 0 };
 	private isPanning = false;
 	private panStart = { x: 0, y: 0 };
+	private isMarqueeSelecting = false;
+	private marqueeStartClient: { x: number; y: number } | null = null;
+	private marqueeCurrentClient: { x: number; y: number } | null = null;
+	private marqueeStartCanvas: { x: number; y: number } | null = null;
+	private marqueeCurrentCanvas: { x: number; y: number } | null = null;
+	private marqueeEl: HTMLElement | null = null;
 	private nodeMouseDownPos: { x: number; y: number } | null = null;
 	private nodeMouseDownId: string | null = null;
 	private didDragThisPointer = false;
 	private selectedNodeId: string | null = null;
-	private selectedNodeWrapper: HTMLElement | null = null;
+	private selectedNodeIds = new Set<string>();
 	private selectedSubmenuEl: HTMLElement | null = null;
 	private edgeFrom: { nodeId: string; side: NodeSide; dotEl: HTMLElement } | null = null;
 	private edgeLineEl: SVGPathElement | null = null;
@@ -66,6 +76,7 @@ export class FileCardCanvasView extends FileView {
 	private draggedEdgeControlPointerOffset = { x: 0, y: 0 };
 	private isRenameWatcherBound = false;
 	private edgeLabelEditorEl: HTMLElement | null = null;
+	private viewStateSaveTimer: number | null = null;
 	private isDetailLeafWatcherBound = false;
 	private resizeState:
 		| {
@@ -121,6 +132,10 @@ export class FileCardCanvasView extends FileView {
 	async onUnloadFile(): Promise<void> {
 		this.closeEdgeLabelEditor();
 		this.closeDetailLeaf();
+		if (this.viewStateSaveTimer !== null) {
+			window.clearTimeout(this.viewStateSaveTimer);
+			this.viewStateSaveTimer = null;
+		}
 		await this.saveCanvasData();
 	}
 
@@ -175,6 +190,17 @@ export class FileCardCanvasView extends FileView {
 				nodes: parsed.nodes ?? [],
 				edges: parsed.edges ?? [],
 			};
+			const viewState = parsed.viewState as
+				| { panX?: number; panY?: number; zoom?: number }
+				| undefined;
+			if (viewState) {
+				const nextZoom = Number(viewState.zoom);
+				const nextPanX = Number(viewState.panX);
+				const nextPanY = Number(viewState.panY);
+				if (Number.isFinite(nextZoom)) this.zoom = Math.max(0.2, Math.min(4, nextZoom));
+				if (Number.isFinite(nextPanX)) this.pan.x = nextPanX;
+				if (Number.isFinite(nextPanY)) this.pan.y = nextPanY;
+			}
 		} catch {
 			this.canvasData = { ...DEFAULT_CANVAS_DATA };
 		}
@@ -194,6 +220,9 @@ export class FileCardCanvasView extends FileView {
 		const toolbar = this.contentEl.createDiv({ cls: "heinibal-canvas-toolbar" });
 		toolbar.createEl("button", { text: "Add files" }).onclick = () => this.showAddFilesModal();
 		toolbar.createEl("button", { text: "Add group" }).onclick = () => this.addGroup();
+		toolbar.createEl("button", { text: "Cards" }).onclick = () => this.showCanvasNodeListModal();
+		toolbar.createEl("button", { text: "Focus cards" }).onclick = () => this.focusCardsInView();
+		toolbar.createEl("button", { text: "Reset view" }).onclick = () => this.resetView();
 
 		const viewport = this.contentEl.createDiv({ cls: "heinibal-canvas-viewport" });
 		this.canvasStageEl = viewport.createDiv({ cls: "heinibal-canvas-stage" });
@@ -208,31 +237,57 @@ export class FileCardCanvasView extends FileView {
 		this.nodesContainer = this.canvasStageEl.createDiv({ cls: "heinibal-canvas-nodes" });
 		this.nodesContainer.style.width = `${CANVAS_SIZE_PX}px`;
 		this.nodesContainer.style.height = `${CANVAS_SIZE_PX}px`;
+		this.nodeWrappers.clear();
 
 		this.renderEdges();
 		for (const node of this.canvasData.nodes) {
 			this.renderNode(node);
 		}
 
-		this.registerDomEvent(this.contentEl, "wheel", (e: WheelEvent) => {
+		this.registerDomEvent(viewport, "wheel", (e: WheelEvent) => {
 			e.preventDefault();
-			const before = this.clientToCanvas(e.clientX, e.clientY);
-			this.zoom = Math.max(0.2, Math.min(4, this.zoom - e.deltaY * 0.001));
 			const viewportRect = viewport.getBoundingClientRect();
-			this.pan.x = e.clientX - viewportRect.left - before.x * this.zoom;
-			this.pan.y = e.clientY - viewportRect.top - before.y * this.zoom;
+			const insideViewport = (
+				e.clientX >= viewportRect.left
+				&& e.clientX <= viewportRect.right
+				&& e.clientY >= viewportRect.top
+				&& e.clientY <= viewportRect.bottom
+			);
+			if (!insideViewport) return;
+
+			if (!Number.isFinite(this.zoom) || this.zoom <= 0) {
+				this.zoom = DEFAULT_VIEW_STATE.zoom;
+			}
+			this.pan = this.sanitizePan(this.pan);
+			const before = this.clientToCanvas(e.clientX, e.clientY);
+			const currentZoom = this.zoom;
+			const nextZoom = Math.max(0.2, Math.min(4, currentZoom - e.deltaY * 0.001));
+			this.zoom = nextZoom;
+			this.pan.x = e.clientX - viewportRect.left - before.x * nextZoom;
+			this.pan.y = e.clientY - viewportRect.top - before.y * nextZoom;
+			this.pan = this.sanitizePan(this.pan);
 			this.updateViewportTransform();
+			this.scheduleViewStateSave();
 		});
 
 		this.registerDomEvent(viewport, "mousedown", (e: MouseEvent) => {
-			if (e.button !== 0) return;
 			const target = e.target as HTMLElement | null;
 			const inNode = target?.closest(".heinibal-node-wrapper");
 			const inMenu = target?.closest(".heinibal-card-submenu") || target?.closest(".heinibal-context-menu");
 			const inToolbar = target?.closest(".heinibal-canvas-toolbar");
-			if (!inNode && !inMenu && !inToolbar) {
+			const inEdge = target?.closest(".heinibal-canvas-edges");
+			if (e.button === 1 && !inMenu && !inToolbar) {
+				e.preventDefault();
+				if (!Number.isFinite(this.pan.x) || !Number.isFinite(this.pan.y)) {
+					this.pan.x = DEFAULT_VIEW_STATE.panX;
+					this.pan.y = DEFAULT_VIEW_STATE.panY;
+				}
 				this.isPanning = true;
 				this.panStart = { x: e.clientX - this.pan.x, y: e.clientY - this.pan.y };
+				return;
+			}
+			if (e.button === 0 && !inNode && !inMenu && !inToolbar && !inEdge) {
+				this.startMarqueeSelection(e, viewport);
 			}
 		});
 		this.registerDomEvent(viewport, "dblclick", (e: MouseEvent) => {
@@ -245,6 +300,9 @@ export class FileCardCanvasView extends FileView {
 			const pos = this.clientToCanvas(e.clientX, e.clientY);
 			void this.createNewFileCardAt(pos.x, pos.y);
 		});
+		this.registerDomEvent(viewport, "auxclick", (e: MouseEvent) => {
+			if (e.button === 1) e.preventDefault();
+		});
 
 		this.registerDomEvent(this.contentEl, "mousedown", (e: MouseEvent) => {
 			const target = e.target as HTMLElement | null;
@@ -254,19 +312,22 @@ export class FileCardCanvasView extends FileView {
 			if (!inNode && !inMenu) return;
 		});
 
-		this.registerDomEvent(document, "mousedown", (e: MouseEvent) => {
-			const target = e.target as Node | null;
-			if (target && !this.contentEl.contains(target)) {
-				this.hideSubmenu();
-				this.clearSelection();
-			}
-		});
-
 		this.registerDomEvent(document, "keydown", (e: KeyboardEvent) => {
-			if ((e.key !== "Delete" && e.key !== "Backspace") || !this.selectedNodeId) return;
+			if ((e.ctrlKey || e.metaKey) && e.key === "0") {
+				e.preventDefault();
+				this.resetView();
+				return;
+			}
+			if (e.key !== "Delete" && e.key !== "Backspace") return;
+			if (this.selectedNodeIds.size === 0) return;
 			if (this.isTypingTarget(e.target)) return;
 			e.preventDefault();
-			this.deleteNodeById(this.selectedNodeId);
+			const selectedIds = [...this.selectedNodeIds];
+			for (const nodeId of selectedIds) {
+				this.deleteNodeById(nodeId, false);
+			}
+			this.renderEdges();
+			void this.saveCanvasData();
 		});
 
 		this.registerDomEvent(document, "mousemove", (e: MouseEvent) => {
@@ -274,29 +335,65 @@ export class FileCardCanvasView extends FileView {
 				this.applyNodeResize(e);
 				return;
 			}
+			if (this.isDraggingNodes()) {
+				this.applyNodeDrag(e);
+				return;
+			}
+			if (this.isMarqueeSelecting) {
+				this.updateMarqueeSelection(e, viewport);
+				return;
+			}
 			if (this.isPanning) {
-				this.pan = { x: e.clientX - this.panStart.x, y: e.clientY - this.panStart.y };
+				this.pan = this.sanitizePan({
+					x: e.clientX - this.panStart.x,
+					y: e.clientY - this.panStart.y,
+				});
 				this.updateViewportTransform();
 			}
-				if (this.draggedEdgeControlId) {
-					const edge = this.canvasData.edges.find((it) => it.id === this.draggedEdgeControlId);
-					if (edge) {
-						const pos = this.clientToCanvas(e.clientX, e.clientY);
-						edge.controlX = pos.x - this.draggedEdgeControlPointerOffset.x;
-						edge.controlY = pos.y - this.draggedEdgeControlPointerOffset.y;
-						this.renderEdges();
+			if (
+				this.nodeMouseDownPos &&
+				!this.didDragThisPointer &&
+				this.draggedNodeIds.size === 0 &&
+				this.nodeMouseDownId
+			) {
+				if ((e.buttons & 1) === 0) {
+					this.nodeMouseDownPos = null;
+					this.nodeMouseDownId = null;
+					return;
+				}
+				const dx = e.clientX - this.nodeMouseDownPos.x;
+				const dy = e.clientY - this.nodeMouseDownPos.y;
+				if (Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) {
+					const node = this.canvasData.nodes.find((n) => n.id === this.nodeMouseDownId);
+					if (node) {
+						this.beginNodeDrag(node, this.nodeMouseDownPos.x, this.nodeMouseDownPos.y);
+						this.didDragThisPointer = true;
 					}
 				}
+			}
+			if (this.draggedEdgeControlId) {
+				const edge = this.canvasData.edges.find((it) => it.id === this.draggedEdgeControlId);
+				if (edge) {
+					const pos = this.clientToCanvas(e.clientX, e.clientY);
+					edge.controlX = pos.x - this.draggedEdgeControlPointerOffset.x;
+					edge.controlY = pos.y - this.draggedEdgeControlPointerOffset.y;
+					this.renderEdges();
+				}
+			}
 			if (this.edgeFrom) {
 				this.updateTempEdge(e);
 			}
 		});
 
 		this.registerDomEvent(document, "mouseup", (e: MouseEvent) => {
-			const hadNodeDrag = this.draggedNodeId !== null;
+			const hadNodeDrag = this.isDraggingNodes();
+			const hadPanning = this.isPanning;
 			if (this.resizeState) {
 				this.resizeState = null;
 				void this.saveCanvasData();
+			}
+			if (this.isMarqueeSelecting) {
+				this.finishMarqueeSelection();
 			}
 			if (this.edgeFrom) {
 					const wrapper = document.elementFromPoint(e.clientX, e.clientY)?.closest(".heinibal-node-wrapper");
@@ -337,9 +434,16 @@ export class FileCardCanvasView extends FileView {
 					void this.saveCanvasData();
 				}
 			this.isPanning = false;
-			this.draggedNodeId = null;
+			this.draggedNodeIds.clear();
+			this.dragStartPointerCanvas = null;
+			this.dragNodeStartPositions.clear();
+			this.nodeMouseDownPos = null;
+			this.nodeMouseDownId = null;
 			if (hadNodeDrag) {
 				void this.saveCanvasData();
+			}
+			if (hadPanning) {
+				this.scheduleViewStateSave(0);
 			}
 		});
 
@@ -349,9 +453,84 @@ export class FileCardCanvasView extends FileView {
 	}
 
 	private updateViewportTransform(): void {
+		if (!Number.isFinite(this.zoom)) this.zoom = DEFAULT_VIEW_STATE.zoom;
+		this.zoom = Math.max(0.2, Math.min(4, this.zoom));
+		this.pan = this.sanitizePan(this.pan);
 		if (this.canvasStageEl instanceof HTMLElement) {
 			this.canvasStageEl.style.transform = `translate(${this.pan.x}px, ${this.pan.y}px) scale(${this.zoom})`;
 		}
+		this.canvasData.viewState = {
+			panX: this.pan.x,
+			panY: this.pan.y,
+			zoom: this.zoom,
+		};
+	}
+
+	private scheduleViewStateSave(delay = 160): void {
+		if (this.viewStateSaveTimer !== null) {
+			window.clearTimeout(this.viewStateSaveTimer);
+			this.viewStateSaveTimer = null;
+		}
+		this.viewStateSaveTimer = window.setTimeout(() => {
+			this.viewStateSaveTimer = null;
+			void this.saveCanvasData();
+		}, delay);
+	}
+
+	private sanitizePan(pan: { x: number; y: number }): { x: number; y: number } {
+		const x = Number.isFinite(pan.x) ? pan.x : DEFAULT_VIEW_STATE.panX;
+		const y = Number.isFinite(pan.y) ? pan.y : DEFAULT_VIEW_STATE.panY;
+		return {
+			x: Math.max(-MAX_ABS_PAN, Math.min(MAX_ABS_PAN, x)),
+			y: Math.max(-MAX_ABS_PAN, Math.min(MAX_ABS_PAN, y)),
+		};
+	}
+
+	private resetView(): void {
+		this.zoom = DEFAULT_VIEW_STATE.zoom;
+		this.pan = { x: DEFAULT_VIEW_STATE.panX, y: DEFAULT_VIEW_STATE.panY };
+		this.updateViewportTransform();
+		this.scheduleViewStateSave(0);
+	}
+
+	private focusCardsInView(): void {
+		const nodes = this.canvasData.nodes;
+		if (nodes.length === 0) {
+			this.resetView();
+			return;
+		}
+		const viewport = this.contentEl.querySelector(".heinibal-canvas-viewport");
+		if (!(viewport instanceof HTMLElement)) {
+			this.resetView();
+			return;
+		}
+
+		let minX = Number.POSITIVE_INFINITY;
+		let minY = Number.POSITIVE_INFINITY;
+		let maxX = Number.NEGATIVE_INFINITY;
+		let maxY = Number.NEGATIVE_INFINITY;
+		for (const node of nodes) {
+			minX = Math.min(minX, node.x);
+			minY = Math.min(minY, node.y);
+			maxX = Math.max(maxX, node.x + node.width);
+			maxY = Math.max(maxY, node.y + node.height);
+		}
+
+		const rect = viewport.getBoundingClientRect();
+		const padding = 120;
+		const contentWidth = Math.max(1, maxX - minX);
+		const contentHeight = Math.max(1, maxY - minY);
+		const fitZoomX = rect.width / (contentWidth + padding * 2);
+		const fitZoomY = rect.height / (contentHeight + padding * 2);
+		const fitZoom = Math.min(fitZoomX, fitZoomY);
+		this.zoom = Math.max(0.2, Math.min(4, fitZoom));
+
+		const cx = (minX + maxX) / 2;
+		const cy = (minY + maxY) / 2;
+		this.pan.x = rect.width / 2 - cx * this.zoom;
+		this.pan.y = rect.height / 2 - cy * this.zoom;
+		this.updateViewportTransform();
+		this.scheduleViewStateSave(0);
 	}
 
 	private async createNewCanvasFile(): Promise<void> {
@@ -479,7 +658,7 @@ export class FileCardCanvasView extends FileView {
 				}
 			}
 			if (added.size > 0) {
-				this.autoLinkMutualFiles([...added]);
+				this.autoLinkImportedFiles([...added]);
 				void this.saveCanvasData();
 			}
 			if (duplicated.size > 0) {
@@ -732,8 +911,7 @@ export class FileCardCanvasView extends FileView {
 			hitPath.setAttribute("stroke", "transparent");
 			hitPath.setAttribute("stroke-width", "16");
 			hitPath.setAttribute("class", "heinibal-edge-path");
-			hitPath.style.pointerEvents = "stroke";
-			hitPath.style.cursor = "pointer";
+			hitPath.setAttribute("pointer-events", "stroke");
 			g.appendChild(hitPath);
 
 			const path = document.createElementNS(svgNS, "path");
@@ -749,7 +927,7 @@ export class FileCardCanvasView extends FileView {
 				path.setAttribute("marker-end", "url(#arrowhead-end)");
 			}
 			path.setAttribute("class", "heinibal-edge-path-visible");
-			path.style.pointerEvents = "none";
+			path.setAttribute("pointer-events", "none");
 			g.appendChild(path);
 
 			const text = document.createElementNS(svgNS, "text");
@@ -760,7 +938,6 @@ export class FileCardCanvasView extends FileView {
 			text.setAttribute("class", "heinibal-edge-label");
 			text.setAttribute("font-size", "12");
 			text.textContent = edge.label ?? "";
-			text.style.cursor = "pointer";
 			text.addEventListener("click", (ev) => {
 				ev.preventDefault();
 				ev.stopPropagation();
@@ -774,8 +951,7 @@ export class FileCardCanvasView extends FileView {
 				handle.setAttribute("cy", String(handlePt.y));
 				handle.setAttribute("r", "8");
 				handle.setAttribute("class", "heinibal-edge-handle");
-				handle.style.pointerEvents = "all";
-				handle.style.cursor = "grab";
+				handle.setAttribute("pointer-events", "all");
 				handle.addEventListener("mousedown", (ev: MouseEvent) => {
 					ev.preventDefault();
 					ev.stopPropagation();
@@ -1004,9 +1180,11 @@ export class FileCardCanvasView extends FileView {
 			return { x: clientX, y: clientY };
 		}
 		const rect = viewport.getBoundingClientRect();
+		const safeZoom = Number.isFinite(this.zoom) && this.zoom > 0 ? this.zoom : DEFAULT_VIEW_STATE.zoom;
+		const safePan = this.sanitizePan(this.pan);
 		return {
-			x: (clientX - rect.left) / this.zoom - this.pan.x / this.zoom,
-			y: (clientY - rect.top) / this.zoom - this.pan.y / this.zoom,
+			x: (clientX - rect.left) / safeZoom - safePan.x / safeZoom,
+			y: (clientY - rect.top) / safeZoom - safePan.y / safeZoom,
 		};
 	}
 
@@ -1017,6 +1195,32 @@ export class FileCardCanvasView extends FileView {
 		}
 		const rect = viewport.getBoundingClientRect();
 		return this.clientToCanvas(rect.left + rect.width / 2, rect.top + rect.height / 2);
+	}
+
+	private centerViewOnCanvasPoint(x: number, y: number): void {
+		const viewport = this.contentEl.querySelector(".heinibal-canvas-viewport");
+		if (!(viewport instanceof HTMLElement)) return;
+		const rect = viewport.getBoundingClientRect();
+		this.pan.x = rect.width / 2 - x * this.zoom;
+		this.pan.y = rect.height / 2 - y * this.zoom;
+		this.updateViewportTransform();
+		this.scheduleViewStateSave(0);
+	}
+
+	private centerViewOnNode(nodeId: string): void {
+		const node = this.canvasData.nodes.find((n) => n.id === nodeId);
+		if (!node) return;
+		const cx = node.x + node.width / 2;
+		const cy = node.y + node.height / 2;
+		this.centerViewOnCanvasPoint(cx, cy);
+	}
+
+	private selectNodeById(nodeId: string): void {
+		const node = this.canvasData.nodes.find((n) => n.id === nodeId);
+		const wrapper = this.nodeWrappers.get(nodeId);
+		const nodeEl = wrapper?.querySelector(".heinibal-canvas-node");
+		if (!node || !wrapper || !(nodeEl instanceof HTMLElement)) return;
+		this.selectNode(node, nodeEl, wrapper);
 	}
 
 	private closeEdgeLabelEditor(): void {
@@ -1158,12 +1362,26 @@ export class FileCardCanvasView extends FileView {
 	}
 
 	private clearSelection(): void {
-		// if (this.selectedNodeId) {
-		// 	this.refreshNodeCardById(this.selectedNodeId);
-		// }
+		const previousIds = [...this.selectedNodeIds];
+		for (const id of previousIds) {
+			this.nodeWrappers.get(id)?.removeClass("is-selected");
+			this.refreshNodeCardById(id);
+		}
+		this.selectedNodeIds.clear();
 		this.selectedNodeId = null;
-		this.selectedNodeWrapper?.removeClass("is-selected");
-		this.selectedNodeWrapper = null;
+	}
+
+	private setSelectedNodeIds(nodeIds: string[]): void {
+		const uniqueIds = [...new Set(nodeIds.filter((id) => !!id))];
+		this.clearSelection();
+		for (const id of uniqueIds) {
+			this.selectedNodeIds.add(id);
+			this.nodeWrappers.get(id)?.addClass("is-selected");
+		}
+		this.selectedNodeId = uniqueIds.length === 1 ? (uniqueIds[0] ?? null) : null;
+		if (uniqueIds.length !== 1) {
+			this.hideSubmenu();
+		}
 	}
 
 	private refreshNodeCardById(nodeId: string): void {
@@ -1181,20 +1399,22 @@ export class FileCardCanvasView extends FileView {
 		else if (node.type === "link") this.renderLinkNode(nodeEl, node);
 	}
 
-	private deleteNodeById(nodeId: string): void {
+	private deleteNodeById(nodeId: string, shouldPersist = true): void {
 		const index = this.canvasData.nodes.findIndex((n) => n.id === nodeId);
 		if (index < 0) return;
 		this.canvasData.nodes.splice(index, 1);
 		this.canvasData.edges = this.canvasData.edges.filter((e) => e.fromNode !== nodeId && e.toNode !== nodeId);
 		const wrapper = this.nodesContainer?.querySelector(`.heinibal-node-wrapper[data-node-id="${nodeId}"]`);
 		wrapper?.remove();
-		if (this.selectedNodeId === nodeId) {
+		this.nodeWrappers.delete(nodeId);
+		if (this.selectedNodeIds.has(nodeId)) {
+			this.selectedNodeIds.delete(nodeId);
 			this.hideSubmenu();
-			this.clearSelection();
 			this.closeDetailLeaf();
+			this.selectedNodeId = null;
 		}
 		this.renderEdges();
-		void this.saveCanvasData();
+		if (shouldPersist) void this.saveCanvasData();
 	}
 
 	private applyNodeResize(e: MouseEvent): void {
@@ -1243,6 +1463,7 @@ export class FileCardCanvasView extends FileView {
 	private renderNode(node: AllCanvasNodeData): void {
 		const wrapper = this.nodesContainer.createDiv({ cls: "heinibal-node-wrapper" });
 		wrapper.dataset.nodeId = node.id ?? "";
+		this.nodeWrappers.set(node.id, wrapper);
 		if (node.type === "group") wrapper.addClass("is-group");
 
 		const nodeEl = wrapper.createDiv({ cls: "heinibal-canvas-node" });
@@ -1281,73 +1502,164 @@ export class FileCardCanvasView extends FileView {
 			this.nodeMouseDownPos = { x: e.clientX, y: e.clientY };
 			this.nodeMouseDownId = node.id ?? null;
 			this.didDragThisPointer = false;
-			this.draggedNodeId = null;
-		});
-
-		this.registerDomEvent(document, "mousemove", (e: MouseEvent) => {
-			if (this.draggedNodeId === node.id) {
-				const viewport = this.contentEl.querySelector(".heinibal-canvas-viewport");
-				if (viewport instanceof HTMLElement) {
-					const rect = viewport.getBoundingClientRect();
-					node.x = (e.clientX - rect.left) / this.zoom - this.pan.x / this.zoom + this.dragOffset.x;
-					node.y = (e.clientY - rect.top) / this.zoom - this.pan.y / this.zoom + this.dragOffset.y;
-				} else {
-					node.x = e.clientX - this.dragOffset.x;
-					node.y = e.clientY - this.dragOffset.y;
-				}
-				wrapper.setCssProps({
-					left: `${node.x}px`,
-					top: `${node.y}px`,
-				});
-				this.renderEdges();
-			} else if (
-				this.nodeMouseDownPos &&
-				!this.didDragThisPointer &&
-				this.draggedNodeId === null &&
-				this.nodeMouseDownId === node.id
-			) {
-				const dx = e.clientX - this.nodeMouseDownPos.x;
-				const dy = e.clientY - this.nodeMouseDownPos.y;
-				if (Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) {
-					this.beginNodeDrag(node, this.nodeMouseDownPos.x, this.nodeMouseDownPos.y);
-					this.didDragThisPointer = true;
-				}
-			}
-		});
-
-		this.registerDomEvent(document, "mouseup", () => {
-			this.nodeMouseDownPos = null;
-			this.nodeMouseDownId = null;
 		});
 
 		this.registerDomEvent(nodeEl, "mouseup", (e: MouseEvent) => {
 			if (e.button !== 0) return;
-			if (!this.didDragThisPointer && this.draggedNodeId !== node.id) {
-				const moved = this.nodeMouseDownPos
-					? Math.hypot(e.clientX - this.nodeMouseDownPos.x, e.clientY - this.nodeMouseDownPos.y) > DRAG_THRESHOLD_PX
-					: false;
-				if (!moved) {
-					if (this.selectedNodeId === node.id) {
-						this.hideSubmenu();
-						this.clearSelection();
-						this.closeDetailLeaf();
-					} else {
-						this.selectNode(node, nodeEl, wrapper);
-					}
+			const wasDragging = this.didDragThisPointer || this.isDraggingNodes();
+			if (!wasDragging) {
+				if (this.selectedNodeIds.size === 1 && this.selectedNodeIds.has(node.id)) {
+					this.hideSubmenu();
+					this.clearSelection();
+					this.closeDetailLeaf();
+				} else {
+					this.selectNode(node, nodeEl, wrapper);
 				}
 			}
+			this.nodeMouseDownPos = null;
+			this.nodeMouseDownId = null;
+			this.didDragThisPointer = false;
 		});
 
 		this.registerDomEvent(nodeEl, "contextmenu", (e: MouseEvent) => {
 			e.preventDefault();
-			this.selectNode(node, nodeEl, wrapper);
+			e.stopPropagation();
+			if (this.selectedNodeIds.size === 1 && this.selectedNodeIds.has(node.id)) {
+				this.hideSubmenu();
+				this.clearSelection();
+				this.closeDetailLeaf();
+			} else {
+				this.selectNode(node, nodeEl, wrapper);
+			}
 		});
 	}
 
 	private beginNodeDrag(node: AllCanvasNodeData, pointerClientX: number, pointerClientY: number): void {
-		this.draggedNodeId = node.id ?? null;
-		const pointerCanvas = this.clientToCanvas(pointerClientX, pointerClientY);
-		this.dragOffset = { x: node.x - pointerCanvas.x, y: node.y - pointerCanvas.y };
+		this.draggedNodeIds.clear();
+		this.dragNodeStartPositions.clear();
+		this.dragStartPointerCanvas = this.clientToCanvas(pointerClientX, pointerClientY);
+
+		const baseDragIds = this.selectedNodeIds.has(node.id) && this.selectedNodeIds.size > 0
+			? [...this.selectedNodeIds]
+			: [node.id];
+		for (const id of baseDragIds) this.draggedNodeIds.add(id);
+
+		const draggedSnapshot = new Set(this.draggedNodeIds);
+		for (const draggedId of [...draggedSnapshot]) {
+			const draggedNode = this.canvasData.nodes.find((n) => n.id === draggedId);
+			if (!draggedNode || draggedNode.type !== "group") continue;
+			for (const childId of this.getGroupChildNodeIds(draggedNode)) {
+				this.draggedNodeIds.add(childId);
+			}
+		}
+
+		for (const draggedId of this.draggedNodeIds) {
+			const draggedNode = this.canvasData.nodes.find((n) => n.id === draggedId);
+			if (!draggedNode) continue;
+			this.dragNodeStartPositions.set(draggedId, { x: draggedNode.x, y: draggedNode.y });
+		}
+	}
+
+	private isDraggingNodes(): boolean {
+		return this.draggedNodeIds.size > 0 && this.dragStartPointerCanvas !== null;
+	}
+
+	private applyNodeDrag(e: MouseEvent): void {
+		if (!this.dragStartPointerCanvas) return;
+		const pointerCanvas = this.clientToCanvas(e.clientX, e.clientY);
+		const dx = pointerCanvas.x - this.dragStartPointerCanvas.x;
+		const dy = pointerCanvas.y - this.dragStartPointerCanvas.y;
+		for (const nodeId of this.draggedNodeIds) {
+			const node = this.canvasData.nodes.find((n) => n.id === nodeId);
+			const start = this.dragNodeStartPositions.get(nodeId);
+			if (!node || !start) continue;
+			node.x = start.x + dx;
+			node.y = start.y + dy;
+			const wrapper = this.nodeWrappers.get(nodeId);
+			if (wrapper) {
+				wrapper.setCssProps({
+					left: `${node.x}px`,
+					top: `${node.y}px`,
+				});
+			}
+		}
+		this.renderEdges();
+	}
+
+	private getGroupChildNodeIds(groupNode: AllCanvasNodeData): string[] {
+		if (groupNode.type !== "group") return [];
+		const right = groupNode.x + groupNode.width;
+		const bottom = groupNode.y + groupNode.height;
+		return this.canvasData.nodes
+			.filter((n) => {
+				if (n.id === groupNode.id) return false;
+				const nr = n.x + n.width;
+				const nb = n.y + n.height;
+				return n.x >= groupNode.x && n.y >= groupNode.y && nr <= right && nb <= bottom;
+			})
+			.map((n) => n.id);
+	}
+
+	private startMarqueeSelection(e: MouseEvent, viewport: HTMLElement): void {
+		this.isMarqueeSelecting = true;
+		this.marqueeStartClient = { x: e.clientX, y: e.clientY };
+		this.marqueeCurrentClient = { x: e.clientX, y: e.clientY };
+		this.marqueeStartCanvas = this.clientToCanvas(e.clientX, e.clientY);
+		this.marqueeCurrentCanvas = this.marqueeStartCanvas;
+		this.marqueeEl?.remove();
+		this.marqueeEl = viewport.createDiv({ cls: "heinibal-marquee-selection" });
+		this.updateMarqueeElement(viewport);
+	}
+
+	private updateMarqueeSelection(e: MouseEvent, viewport: HTMLElement): void {
+		if (!this.isMarqueeSelecting || !this.marqueeStartCanvas) return;
+		this.marqueeCurrentClient = { x: e.clientX, y: e.clientY };
+		this.marqueeCurrentCanvas = this.clientToCanvas(e.clientX, e.clientY);
+		this.updateMarqueeElement(viewport);
+		const bounds = this.getCanvasMarqueeBounds();
+		if (!bounds) return;
+		const selectedIds = this.canvasData.nodes
+			.filter((node) =>
+				node.x < bounds.maxX &&
+				node.x + node.width > bounds.minX &&
+				node.y < bounds.maxY &&
+				node.y + node.height > bounds.minY
+			)
+			.map((node) => node.id);
+		this.setSelectedNodeIds(selectedIds);
+	}
+
+	private finishMarqueeSelection(): void {
+		this.isMarqueeSelecting = false;
+		this.marqueeStartClient = null;
+		this.marqueeCurrentClient = null;
+		this.marqueeStartCanvas = null;
+		this.marqueeCurrentCanvas = null;
+		this.marqueeEl?.remove();
+		this.marqueeEl = null;
+	}
+
+	private updateMarqueeElement(viewport: HTMLElement): void {
+		if (!this.marqueeEl || !this.marqueeStartClient || !this.marqueeCurrentClient) return;
+		const rect = viewport.getBoundingClientRect();
+		const left = Math.min(this.marqueeStartClient.x, this.marqueeCurrentClient.x) - rect.left;
+		const top = Math.min(this.marqueeStartClient.y, this.marqueeCurrentClient.y) - rect.top;
+		const width = Math.abs(this.marqueeCurrentClient.x - this.marqueeStartClient.x);
+		const height = Math.abs(this.marqueeCurrentClient.y - this.marqueeStartClient.y);
+		this.marqueeEl.style.left = `${left}px`;
+		this.marqueeEl.style.top = `${top}px`;
+		this.marqueeEl.style.width = `${width}px`;
+		this.marqueeEl.style.height = `${height}px`;
+	}
+
+	private getCanvasMarqueeBounds(): { minX: number; minY: number; maxX: number; maxY: number } | null {
+		if (!this.marqueeStartCanvas || !this.marqueeCurrentCanvas) return null;
+		return {
+			minX: Math.min(this.marqueeStartCanvas.x, this.marqueeCurrentCanvas.x),
+			minY: Math.min(this.marqueeStartCanvas.y, this.marqueeCurrentCanvas.y),
+			maxX: Math.max(this.marqueeStartCanvas.x, this.marqueeCurrentCanvas.x),
+			maxY: Math.max(this.marqueeStartCanvas.y, this.marqueeCurrentCanvas.y),
+		};
 	}
 
 	private renderResizeHandles(wrapper: HTMLElement, nodeEl: HTMLElement, node: AllCanvasNodeData): void {
@@ -1453,10 +1765,7 @@ export class FileCardCanvasView extends FileView {
 
 	private selectNode(node: AllCanvasNodeData, nodeEl: HTMLElement, wrapper: HTMLElement): void {
 		this.hideSubmenu();
-		this.clearSelection();
-		this.selectedNodeId = node.id ?? null;
-		this.selectedNodeWrapper = wrapper;
-		wrapper.addClass("is-selected");
+		this.setSelectedNodeIds([node.id]);
 		this.refreshNodeCardById(node.id);
 
 		if (node.type === "file") {
@@ -1472,6 +1781,13 @@ export class FileCardCanvasView extends FileView {
 	private showSubmenuBelowCard(node: AllCanvasNodeData, nodeEl: HTMLElement, wrapper: HTMLElement): void {
 		this.hideSubmenu();
 		const panel = wrapper.createDiv({ cls: "heinibal-card-submenu" });
+		const stopBubble = (e: MouseEvent): void => {
+			e.stopPropagation();
+		};
+		this.registerDomEvent(panel, "mousedown", stopBubble);
+		this.registerDomEvent(panel, "mouseup", stopBubble);
+		this.registerDomEvent(panel, "click", stopBubble);
+		this.registerDomEvent(panel, "contextmenu", stopBubble);
 		this.addNodeContentEditor(panel, node, nodeEl);
 
 		const appearanceRow = panel.createDiv({ cls: "heinibal-panel-row" });
@@ -1495,7 +1811,7 @@ export class FileCardCanvasView extends FileView {
 		const customColor = colorRow.createEl("input", { attr: { type: "color" } });
 		customColor.className = "heinibal-color-custom";
 		const customHex = colorRow.createEl("input", { type: "text", cls: "heinibal-color-hex" });
-		customHex.placeholder = "#RRGGBB";
+		customHex.placeholder = "#rrggbb";
 		const initialHex = this.nodeColorToHex(node);
 		customColor.value = initialHex;
 		customHex.value = initialHex;
@@ -1814,7 +2130,7 @@ export class FileCardCanvasView extends FileView {
 				item.onclick = () => {
 					this.addFileToCanvas(file);
 					existingPaths.add(file.path);
-					this.autoLinkMutualFiles([file.path]);
+					this.autoLinkImportedFiles([file.path]);
 					renderList(search.value);
 				};
 			}
@@ -1823,13 +2139,84 @@ export class FileCardCanvasView extends FileView {
 		search.addEventListener("input", () => renderList(search.value));
 		search.addEventListener("keydown", (e: KeyboardEvent) => {
 			if (e.key !== "Enter") return;
-			const firstItem = list.querySelector(".heinibal-file-list-item") as HTMLElement | null;
+			const firstItem = list.querySelector<HTMLElement>(".heinibal-file-list-item");
 			if (firstItem) firstItem.click();
 		});
 		renderList("");
 		closeBtn.addEventListener("click", () => modal.remove());
 		modal.addEventListener("click", (e) => { if (e.target === modal) modal.remove(); });
 		document.body.appendChild(modal);
+	}
+
+	private showCanvasNodeListModal(): void {
+		const modal = document.createElement("div");
+		modal.className = "heinibal-add-files-modal";
+		const content = modal.createDiv({ cls: "heinibal-modal-content" });
+		content.createEl("h3", { text: "Cards on canvas" });
+		const search = content.createEl("input", {
+			type: "text",
+			cls: "heinibal-file-search",
+			placeholder: "Search cards",
+		});
+		const list = content.createDiv({ cls: "heinibal-file-list" });
+		const closeBtn = content.createEl("button", { text: "Close", cls: "heinibal-modal-close" });
+
+		const cards = this.canvasData.nodes.filter((n) => n.type !== "group");
+		const renderList = (query: string): void => {
+			list.empty();
+			const q = query.trim().toLowerCase();
+			const filtered = cards
+				.filter((node) => {
+					const title = this.getNodeListTitle(node).toLowerCase();
+					return q.length === 0 || title.includes(q);
+				})
+				.sort((a, b) => this.getNodeListTitle(a).localeCompare(this.getNodeListTitle(b)));
+
+			for (const node of filtered) {
+				const row = list.createEl("div", { cls: "heinibal-file-list-item" });
+				const title = this.getNodeListTitle(node);
+				const subtitle = row.createEl("div", { cls: "heinibal-node-list-subtitle" });
+				subtitle.textContent = node.type === "file" ? node.file : node.type;
+				row.createEl("div", { text: title, cls: "heinibal-node-list-title" });
+				row.appendChild(subtitle);
+
+				const actions = row.createEl("div", { cls: "heinibal-node-list-actions" });
+				const locateBtn = actions.createEl("button", { text: "Locate" });
+				const openBtn = actions.createEl("button", { text: "Open" });
+				locateBtn.onclick = (ev) => {
+					ev.stopPropagation();
+					this.centerViewOnNode(node.id);
+				};
+				openBtn.onclick = (ev) => {
+					ev.stopPropagation();
+					this.centerViewOnNode(node.id);
+					this.selectNodeById(node.id);
+					modal.remove();
+				};
+				row.onclick = () => {
+					this.centerViewOnNode(node.id);
+				};
+			}
+		};
+
+		search.addEventListener("input", () => renderList(search.value));
+		renderList("");
+		closeBtn.addEventListener("click", () => modal.remove());
+		modal.addEventListener("click", (e) => { if (e.target === modal) modal.remove(); });
+		document.body.appendChild(modal);
+	}
+
+	private getNodeListTitle(node: AllCanvasNodeData): string {
+		if (node.type === "file") {
+			return this.getFileNodeDisplayTitle(node);
+		}
+		if (node.type === "text") {
+			return (node.text || "Text").slice(0, 40);
+		}
+		if (node.type === "link") {
+			return node.url || "Link";
+		}
+		return node.type;
 	}
 
 	private getElbowPath(
@@ -1892,11 +2279,8 @@ export class FileCardCanvasView extends FileView {
 		return `edge-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 	}
 
-	private hasEdgeBetween(nodeAId: string, nodeBId: string): boolean {
-		return this.canvasData.edges.some((edge) => {
-			return (edge.fromNode === nodeAId && edge.toNode === nodeBId)
-				|| (edge.fromNode === nodeBId && edge.toNode === nodeAId);
-		});
+	private hasDirectedEdge(fromNodeId: string, toNodeId: string): boolean {
+		return this.canvasData.edges.some((edge) => edge.fromNode === fromNodeId && edge.toNode === toNodeId);
 	}
 
 	private getOutgoingLinkPaths(filePath: string): Set<string> {
@@ -1912,7 +2296,7 @@ export class FileCardCanvasView extends FileView {
 		return out;
 	}
 
-	private autoLinkMutualFiles(addedPaths: string[]): void {
+	private autoLinkImportedFiles(addedPaths: string[]): void {
 		if (addedPaths.length === 0) return;
 		const fileNodes = this.canvasData.nodes.filter((n): n is CanvasFileData => n.type === "file");
 		if (fileNodes.length === 0) return;
@@ -1930,35 +2314,66 @@ export class FileCardCanvasView extends FileView {
 			outgoingCache.set(path, outgoing);
 			return outgoing;
 		};
-		let linked = false;
-		for (let i = 0; i < entries.length; i++) {
-			for (let j = i + 1; j < entries.length; j++) {
-				const entryA = entries[i];
-				const entryB = entries[j];
-				if (!entryA || !entryB) continue;
-				const [pathA, nodeA] = entryA;
-				const [pathB, nodeB] = entryB;
-				if (!addedSet.has(pathA) && !addedSet.has(pathB)) continue;
-				const outgoingA = getOutgoing(pathA);
-				const outgoingB = getOutgoing(pathB);
-				if (!outgoingA.has(pathB) || !outgoingB.has(pathA)) continue;
-				if (this.hasEdgeBetween(nodeA.id, nodeB.id)) continue;
+		let changed = false;
+		for (const [sourcePath, sourceNode] of entries) {
+			const outgoing = getOutgoing(sourcePath);
+			for (const targetPath of outgoing) {
+				const targetNode = nodesByPath.get(targetPath);
+				if (!targetNode) continue;
+				if (sourceNode.id === targetNode.id) continue;
+				if (!addedSet.has(sourcePath) && !addedSet.has(targetPath)) continue;
+
+				const hasReverseLink = getOutgoing(targetPath).has(sourcePath);
+				const existingForward = this.canvasData.edges.find(
+					(edge) => edge.fromNode === sourceNode.id && edge.toNode === targetNode.id
+				);
+				const existingBackward = this.canvasData.edges.find(
+					(edge) => edge.fromNode === targetNode.id && edge.toNode === sourceNode.id
+				);
+
+				if (hasReverseLink) {
+					const existing = existingForward ?? existingBackward;
+					if (existing) {
+						if (existing.fromEnd !== "arrow" || existing.toEnd !== "arrow") {
+							existing.fromEnd = "arrow";
+							existing.toEnd = "arrow";
+							changed = true;
+						}
+						continue;
+					}
+					this.canvasData.edges.push({
+						id: this.createEdgeId(),
+						fromNode: sourceNode.id,
+						fromSide: "right",
+						fromOffset: 0.5,
+						toNode: targetNode.id,
+						toSide: "left",
+						toOffset: 0.5,
+						fromEnd: "arrow",
+						toEnd: "arrow",
+						edgeStyle: "curve",
+					});
+					changed = true;
+					continue;
+				}
+
+				if (this.hasDirectedEdge(sourceNode.id, targetNode.id)) continue;
 				this.canvasData.edges.push({
 					id: this.createEdgeId(),
-					fromNode: nodeA.id,
+					fromNode: sourceNode.id,
 					fromSide: "right",
 					fromOffset: 0.5,
-					toNode: nodeB.id,
+					toNode: targetNode.id,
 					toSide: "left",
 					toOffset: 0.5,
-					fromEnd: "arrow",
+					fromEnd: "none",
 					toEnd: "arrow",
 					edgeStyle: "curve",
 				});
-				linked = true;
+				changed = true;
 			}
 		}
-		if (linked) {
+		if (changed) {
 			this.renderEdges();
 			void this.saveCanvasData();
 		}
